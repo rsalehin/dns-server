@@ -58,6 +58,24 @@ class DNSQuestion:
         return packed_question
         
 
+class DNSAnswer:
+    def __init__(self, name, type, a_class, ttl, data):
+        self.name = name
+        self.type = type
+        self.a_class = a_class
+        self.ttl = ttl
+        self.data = data 
+        
+    def pack(self):
+        packed_answer = b''
+        packed_answer += encode_domain_name(self.name)
+        packed_answer += self.type.to_bytes(2, 'big')
+        packed_answer += self.a_class.to_bytes(2, 'big')
+        packed_answer += self.ttl.to_bytes(4, 'big')
+        packed_answer += len(self.data).to_bytes(2, 'big')
+        packed_answer += self.data
+        return packed_answer
+    
 def main():
     print("Logs from your program will appear here.")
     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -69,8 +87,12 @@ def main():
             print(f"Received {len(buf)} bytes from {source_address}")
             header = DNSHeader(id = 1234, qr=1, rcode=1)
             question = DNSQuestion(name="codecrafters.io", type=1, q_class=1)
+            ip_address_bytes = socket.inet_aton("8.8.8.8")
+            answer = DNSAnswer(name="codecrafters.io", type=1, a_class=1, ttl=60, data=ip_address_bytes)
             
-            response = header.pack() + question.pack()
+            
+            response = header.pack() + question.pack() + answer.pack()
+            print(response)
             udp_socket.sendto(response, source_address)
             print(f"Sent {len(response)} bytes to {source_address}")
         except Exception as e:
