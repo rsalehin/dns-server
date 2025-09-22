@@ -1,111 +1,92 @@
+# main.py
 import socket
+import struct # Import the struct module
 
 class DNSHeader:
-    def __init__(self, id, qr = 1, opcode = 0, aa = 0, tc = 0, rd=0, ra = 0, z = 0, rcode=0, qdcount=0, ancount=0, nscount=0, arcount=0):
-        """
-        Bytes 0-1: ID (16 bits)
-        Byte 2   : Flags (QR | Opcode (4) | AA | TC | RD)   ← we'll call this `byte3` in the code
-        Byte 3   : Flags (RA | Z (3) | RCODE (4))           ← `byte4` in the code
-        Bytes 4-5 : QDCOUNT (16 bits)
-        Bytes 6-7 : ANCOUNT (16 bits)
-        Bytes 8-9 : NSCOUNT (16 bits)
-        Bytes 10-11: ARCOUNT (16 bits)
-        """
+    def __init__(self, id, qr=1, opcode=0, aa=0, tc=0, rd=0, ra=0, z=0, rcode=0, qdcount=0, ancount=0, nscount=0, arcount=0):
+        self.id, self.qr, self.opcode, self.aa, self.tc, self.rd, self.ra, self.z, self.rcode = id, qr, opcode, aa, tc, rd, ra, z, rcode
+        self.qdcount, self.ancount, self.nscount, self.arcount = qdcount, ancount, nscount, arcount
+
+    @classmethod
+    def unpack(cls, data):
+        # Unpack the first 12 bytes of the data using struct
+        # > denotes big-endian, H is for unsigned short (2 bytes), B is for unsigned char (1 byte)
+        id, flags, qdcount, ancount, nscount, arcount = struct.unpack('>H H HHHH', data[:12])
         
-        self.id = id            # 16 bits: Packet identifier
-        self.qr = qr            # 1 bit: Query/Response
-        self.opcode = opcode    # 4 bits: Operation Code
-        self.aa = aa            # 1 bit: Authoritative Answer
-        self.tc = tc            # 1 bit: Truncation 
-        self.rd = rd            # 1 bit: Recursive Desired 
-        self.ra = ra            # 1 bit: Recursive available
-        self.z = z              # 3 bits: Reserved 
-        self.rcode = rcode      # 4 bits: Response code
-        self.qdcount = qdcount  # 16 bits: Question Count
-        self.ancount = ancount  # 16 bits: Answer record count
-        self.nscount  = nscount # 16 bits: Authority Record Count
-        self.arcount = arcount  # 16 bits: Additional Record Count  
-    
+        # Extract individual flags from the 16-bit flags field using bitwise operations
+        qr = (flags >> 15) & 0b1
+        opcode = (flags >> 11) & 0b1111
+        aa = (flags >> 10) & 0b1
+        tc = (flags >> 9) & 0b1
+        rd = (flags >> 8) & 0b1
+        ra = (flags >> 7) & 0b1
+        z = (flags >> 4) & 0b111
+        rcode = flags & 0b1111
+        
+        return cls(id, qr, opcode, aa, tc, rd, ra, z, rcode, qdcount, ancount, nscount, arcount)
+
     def pack(self):
-        # The header is 12 bytes = 96 bits long. We build it piece-by-piece
-        packed_header = b''
-        # ID: 16 bits = 2 bytes 
-        packed_header += self.id.to_bytes(2, 'big')
-        # Byte 3: from qr to rd
-        byte_3 =  (self.qr << 7)+ (self.opcode << 3)+(self.aa << 2)+ (self.tc << 1)+ self.rd
-        packed_header += byte_3.to_bytes(1, 'big')
-        # Byte 4: from ra to rcode 
-        byte_4 = (self.ra << 7)+ (self.z << 4)+ self.rcode
-        packed_header += byte_4.to_bytes(1, 'big')
-        packed_header += self.qdcount.to_bytes(1, 'big')
-        packed_header += self.ancount.to_bytes(1, 'big')
-        packed_header += self.nscount.to_bytes(1, 'big')
-        packed_header += self.arcount.to_bytes(1, 'big')
+        # We need to pack the flags back into a single 2-byte integer
+        flags = (self.qr << 15) | (self.opcode << 11) | (self.aa << 10) | (self.tc << 9) | (self.rd << 8) | \
+                (self.ra << 7) | (self.z << 4) | self.rcode
         
+        packed_header = struct.pack('>H H HHHH', self.id, flags, self.qdcount, self.ancount, self.nscount, self.arcount)
         return packed_header
 
-   
+def encode_domain_name(domain_name):
+    encoded = b""
+    for label in domain_name.split('.'):
+        encoded += len(label).to_bytes(1, 'big')
+        encoded += label.encode("utf-8")
+    encoded += b'\x00'
+    return encoded
+
 class DNSQuestion:
     def __init__(self, name, type, q_class):
-        self.name = name # Domain name as a string
-        self.type = type # 1 for A record (IPv4)
-        self.q_class = q_class # 1 for IN (internet)
+        self.name, self.type, self.q_class = name, type, q_class
     def pack(self):
-        packed_question = b""
-        packed_question += encode_domain_name(self.name)
-        packed_question += self.type.to_bytes(2, 'big')
-        packed_question += self.q_class.to_bytes(2, 'big')
-        return packed_question
-        
+        return encode_domain_name(self.name) + self.type.to_bytes(2, 'big') + self.q_class.to_bytes(2, 'big')
 
 class DNSAnswer:
     def __init__(self, name, type, a_class, ttl, data):
-        self.name = name
-        self.type = type
-        self.a_class = a_class
-        self.ttl = ttl
-        self.data = data 
-        
+        self.name, self.type, self.a_class, self.ttl, self.data = name, type, a_class, ttl, data
     def pack(self):
-        packed_answer = b''
-        packed_answer += encode_domain_name(self.name)
-        packed_answer += self.type.to_bytes(2, 'big')
-        packed_answer += self.a_class.to_bytes(2, 'big')
-        packed_answer += self.ttl.to_bytes(4, 'big')
-        packed_answer += len(self.data).to_bytes(2, 'big')
-        packed_answer += self.data
-        return packed_answer
-    
+        return encode_domain_name(self.name) + self.type.to_bytes(2, 'big') + self.a_class.to_bytes(2, 'big') + \
+               self.ttl.to_bytes(4, 'big') + len(self.data).to_bytes(2, 'big') + self.data
+
 def main():
-    print("Logs from your program will appear here.")
+    print("Logs from your program will appear here!")
     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_socket.bind(("127.0.0.1", 2053))
     print("UDP server is listening on port 2053...")
+
     while True:
         try:
             buf, source_address = udp_socket.recvfrom(512)
             print(f"Received {len(buf)} bytes from {source_address}")
-            header = DNSHeader(id = 1234, qr=1, rcode=1)
+
+            # 1. Parse the header from the incoming request
+            request_header = DNSHeader.unpack(buf)
+
+            # 2. Determine the RCODE for the response
+            response_rcode = 0 if request_header.opcode == 0 else 4
+
+            # 3. Create the response header, MIMICKING the ID and other fields
+            response_header = DNSHeader(id=request_header.id, qr=1, opcode=request_header.opcode, 
+                                        rd=request_header.rd, rcode=response_rcode, qdcount=1, ancount=1)
+
+            # For now, we still send a hardcoded question and answer
             question = DNSQuestion(name="codecrafters.io", type=1, q_class=1)
             ip_address_bytes = socket.inet_aton("8.8.8.8")
             answer = DNSAnswer(name="codecrafters.io", type=1, a_class=1, ttl=60, data=ip_address_bytes)
             
-            
-            response = header.pack() + question.pack() + answer.pack()
-            print(response)
+            response = response_header.pack() + question.pack() + answer.pack()
             udp_socket.sendto(response, source_address)
-            print(f"Sent {len(response)} bytes to {source_address}")
+            print(f"Sent {len(response)} byte response to {source_address}")
+
         except Exception as e:
             print(f"An error occurred: {e}")
-            break 
-# A helper function to encode the domain name
-def encode_domain_name(domain_name):
-     encoded = b""
-     for label in domain_name.split('.'):
-         encoded += len(label).to_bytes(1, 'big')
-         encoded += label.encode('utf-8')
-     encoded += b'\x00'
-     return encoded 
+            break
 
 if __name__ == "__main__":
     main()
