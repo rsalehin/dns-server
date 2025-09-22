@@ -44,6 +44,20 @@ class DNSHeader:
         
         return packed_header
 
+   
+class DNSQuestion:
+    def __init__(self, name, type, q_class):
+        self.name = name # Domain name as a string
+        self.type = type # 1 for A record (IPv4)
+        self.q_class = q_class # 1 for IN (internet)
+    def pack(self):
+        packed_question = b""
+        packed_question += encode_domain_name(self.name)
+        packed_question += self.type.to_bytes(2, 'big')
+        packed_question += self.q_class.to_bytes(2, 'big')
+        return packed_question
+        
+
 def main():
     print("Logs from your program will appear here.")
     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -54,11 +68,22 @@ def main():
             buf, source_address = udp_socket.recvfrom(512)
             print(f"Received {len(buf)} bytes from {source_address}")
             header = DNSHeader(id = 1234, qr=1, rcode=1)
-            response = header.pack()
+            question = DNSQuestion(name="codecrafters.io", type=1, q_class=1)
+            
+            response = header.pack() + question.pack()
             udp_socket.sendto(response, source_address)
             print(f"Sent {len(response)} bytes to {source_address}")
         except Exception as e:
             print(f"An error occurred: {e}")
             break 
+# A helper function to encode the domain name
+def encode_domain_name(domain_name):
+     encoded = b""
+     for label in domain_name.split('.'):
+         encoded += len(label).to_bytes(1, 'big')
+         encoded += label.encode('utf-8')
+     encoded += b'\x00'
+     return encoded 
+
 if __name__ == "__main__":
     main()
